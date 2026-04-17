@@ -1,5 +1,7 @@
+import matplotlib.pyplot as plt
 import numpy as np
 from scipy.signal import periodogram
+
 
 def symmetric_peak_periodogram(
                     signal,
@@ -7,7 +9,9 @@ def symmetric_peak_periodogram(
                     period,
                     signal_band = (0.02, 0.05),
                     noise_band = (0.1, 0.9),
+                    noise_k=10,
                     detrend='linear',
+                    
                 ):
     """
     Iteratively trims the signal from the end to make the spectral peak
@@ -27,6 +31,8 @@ def symmetric_peak_periodogram(
         noise_band : tuble with two floats
             Frequency band used to estimate noise level by averaging
             power within this band
+        noise_k : float, default 10.0
+            Peak is considered significant if its height exceedes `noise_k*noise`
         detrend : str, default 'linear'
             Passed to `scipy.signal.periodogram`. See docs for 
             `scipy.signal.periodogram` for details
@@ -45,6 +51,7 @@ def symmetric_peak_periodogram(
                 "noise_level": noise_level,
                 "significant": bool
             }
+            
     """
 
     signal = np.asarray(signal)
@@ -112,13 +119,15 @@ def symmetric_peak_periodogram(
         noise_level = np.nan
         print("No values in the noise band. Cannot estimate noise level.")
     
-    best_result["noise_level"] = noise_level
-    best_result["significant"] = peak_val >= 3 * noise_level
-    best_result['signal_band_f1'] = signal_band[0]
-    best_result['signal_band_f2'] = signal_band[1]
-    best_result['noise_band_f1'] = noise_band[0]
-    best_result['noise_band_f2'] = noise_band[1]
-
+    if best_result is not None:
+        best_result["noise_level"] = noise_level
+        best_result['noise_k'] = noise_k
+        best_result["significant"] = peak_val >= noise_k * noise_level
+        best_result['signal_band_f1'] = signal_band[0]
+        best_result['signal_band_f2'] = signal_band[1]
+        best_result['noise_band_f1'] = noise_band[0]
+        best_result['noise_band_f2'] = noise_band[1]
+    
     return best_result
 
 
@@ -142,8 +151,12 @@ def plot_results(res, ax=None, label=None):
         return_ax = True
     ax.plot(res['frequencies'], res['power'], 'k.-')
     ax.plot(res['peak_freq'], res['peak_height'], marker='o', color='r', label="*" if res['significant'] else "n.s.")
-    ax.axhline(res['noise_level'], color='k', label='noise', ls='--', alpha=.3)
-    ax.axhline(3*res['noise_level'], color='r', label='3*noise', ls='--', alpha=.3)    
+    ax.axhline(res['noise_level'], 
+               color='k', label='noise', ls='--', alpha=.3)
+    
+    kk = res['noise_k']
+    ax.axhline(kk*res['noise_level'], 
+               color='r', label=f'{kk}*noise', ls='--', alpha=.3)    
     ax.legend()
     ax.set(xlabel="Frequency (Hz)", ylabel="Spectral power")
     return ax
