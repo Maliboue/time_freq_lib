@@ -1,15 +1,13 @@
 import numpy as np
 from scipy.signal import periodogram
 
-import numpy as np
-from scipy.signal import periodogram
-
 def symmetric_peak_periodogram(
                     signal,
                     fs,
                     period,
                     signal_band = (0.02, 0.05),
-                    noise_band = (0.1, 0.9)
+                    noise_band = (0.1, 0.9),
+                    detrend='linear',
                 ):
     """
     Iteratively trims the signal from the end to make the spectral peak
@@ -29,6 +27,9 @@ def symmetric_peak_periodogram(
         noise_band : tuble with two floats
             Frequency band used to estimate noise level by averaging
             power within this band
+        detrend : str, default 'linear'
+            Passed to `scipy.signal.periodogram`. See docs for 
+            `scipy.signal.periodogram` for details
 
     Returns
     -------
@@ -58,7 +59,7 @@ def symmetric_peak_periodogram(
     for k in range(n_drop_max):
         current_signal = signal[:n - k]
 
-        f, Pxx = periodogram(current_signal, fs=fs)
+        f, Pxx = periodogram(current_signal, fs=fs, detrend=detrend)
 
         # --- Peak band ---
         band_mask = (f >= signal_band[0]) & (f <= signal_band[1])
@@ -92,6 +93,7 @@ def symmetric_peak_periodogram(
                 "power": Pxx,
                 "trimmed_signal": current_signal,
                 "peak_index": peak_idx_full,
+                "peak_freq": f[peak_idx_full],
                 "symmetry_score": score,
                 "num_trimmed": k,
                 "peak_height": peak_val,
@@ -112,8 +114,39 @@ def symmetric_peak_periodogram(
     
     best_result["noise_level"] = noise_level
     best_result["significant"] = peak_val >= 3 * noise_level
+    best_result['signal_band_f1'] = signal_band[0]
+    best_result['signal_band_f2'] = signal_band[1]
+    best_result['noise_band_f1'] = noise_band[0]
+    best_result['noise_band_f2'] = noise_band[1]
 
     return best_result
+
+
+def plot_results(res, ax=None, label=None):
+    """Plot spectrum, detected peak, and noise level. Labels
+    the peak with `*` in the legend if the peak height is significant
+    
+    Parameters
+    ----------
+        res : dict
+            Output of `symmetric_peak_periodogram` function.
+            Contains power values, frequency values, peak freq.
+            and height, noise level, significance, etc.
+        ax : axes, optional
+
+    """
+    
+    return_ax = False
+    if ax is None:
+        _,ax = plt.subplots()
+        return_ax = True
+    ax.plot(res['frequencies'], res['power'], 'k.-')
+    ax.plot(res['peak_freq'], res['peak_height'], marker='o', color='r', label="*" if res['significant'] else "n.s.")
+    ax.axhline(res['noise_level'], color='k', label='noise', ls='--', alpha=.3)
+    ax.axhline(3*res['noise_level'], color='r', label='3*noise', ls='--', alpha=.3)    
+    ax.legend()
+    ax.set(xlabel="Frequency (Hz)", ylabel="Spectral power")
+    return ax
 
 # def symmetric_peak_periodogram(
 #                     signal,
