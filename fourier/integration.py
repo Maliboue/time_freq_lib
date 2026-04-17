@@ -18,8 +18,8 @@ def integrate_psd(Pxx, f, f_center, half_width):
 
     Returns
     -------
-    integrated_power : float
-        Integral of PSD over the specified window
+    - integrated power
+    - number of samples inside the freuqency band
     """
 
     Pxx = np.asarray(Pxx)
@@ -45,4 +45,4 @@ def integrate_psd(Pxx, f, f_center, half_width):
     # Integrate using trapezoidal rule
     integrated_power = np.trapz(Pxx[mask], f[mask])
 
-    return integrated_power
+    return integrated_power, len(Pxx[mask])
