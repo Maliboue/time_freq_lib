@@ -131,7 +131,7 @@ def symmetric_peak_periodogram(
     return best_result
 
 
-def plot_results(res, ax=None, label=None):
+def plot_results(res, ax=None, label=None, stepplot=False):
     """Plot spectrum, detected peak, and noise level. Labels
     the peak with `*` in the legend if the peak height is significant
     
@@ -142,6 +142,10 @@ def plot_results(res, ax=None, label=None):
             Contains power values, frequency values, peak freq.
             and height, noise level, significance, etc.
         ax : axes, optional
+        label : str, optional
+        stepplot : bool, default False
+            Whether to plot spectrum using pyplot.step
+            with parameter where='mid'.
 
     """
     
@@ -149,7 +153,11 @@ def plot_results(res, ax=None, label=None):
     if ax is None:
         _,ax = plt.subplots()
         return_ax = True
-    ax.plot(res['frequencies'], res['power'], 'k.-')
+    if stepplot:
+        ax.step(res['frequencies'], res['power'], color='k', where='mid')
+    else:
+        ax.plot(res['frequencies'], res['power'], 'k.-')
+    
     ax.plot(res['peak_freq'], res['peak_height'], marker='o', color='r', label="*" if res['significant'] else "n.s.")
     ax.axhline(res['noise_level'], 
                color='k', label='noise', ls='--', alpha=.3)
