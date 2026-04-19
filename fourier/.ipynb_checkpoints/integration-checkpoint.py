@@ -1,5 +1,33 @@
 import numpy as np
 
+def sum_power(res, num_bins_to_sum):
+    """ Total power contained in indicated bins of a periodogram.
+    
+    Parameters
+    ----------
+    
+        res : dict
+            output of `symmetric_peak_periodogram` command.
+            Contains PSD values, frequency values, peak index, etc.
+            
+        num_bins_to_sum : tupple of two integers
+            The first element is the number of the bins on the left (towards
+            lower frequencies) of the peak. The second element is the 
+            number of bins on the right side of the peak. PSD values in all
+            these bins, including the peak bin, are summed after subtraction
+            of the baseline, also contained in `res`. 
+            
+    Returns
+    -------
+    
+        power : float
+            Summed PSD values multiplied by the frequency step.
+    
+    """
+    idx_0 = res['peak_index'] - num_bins_to_sum[0]
+    idx_1 = res['peak_index'] + num_bins_to_sum[1] + 1
+    freq_step = res['frequencies'][1]
+    return (res['power'][idx_0 : idx_1].sum() - res['noise_level'])*freq_step
 
 def integrate_psd(Pxx, f, f_center, half_width):
     """
