@@ -2,6 +2,188 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.signal import periodogram
 
+def scan_periodogram(
+                    signal,
+                    fs,
+                    max_drop,
+                    signal_band = (0.02, 0.05),
+                    detrend='linear',
+                    
+                ):
+    """
+    Localize periodogram peak while iteratively trimming the 
+    signal. Return peak coordinates for all k trimmed samples.
+
+    Parameters
+    ----------
+        signal : array-like
+            Input 1D signal
+        fs : float
+            Sampling frequency (Hz)
+        max_drop : int
+            Max number of samples to trim
+        signal_band : tuble with two floats
+            Frequency band to search for the peak
+        detrend : str, default 'linear'
+            Passed to `scipy.signal.periodogram`. See docs for 
+            `scipy.signal.periodogram` for details
+
+    Returns
+    -------
+        frequency : 1d array
+        periodogram values : 1d array
+            
+    """
+
+    signal = np.asarray(signal)
+    n = len(signal)
+    
+    freqs = []
+    vals = []
+    
+    for k in range(max_drop):
+        current_signal = signal[:n - k]
+
+        f, Pxx = periodogram(current_signal, fs=fs, detrend=detrend)
+
+        # --- Peak band ---
+        band_mask = (f >= signal_band[0]) & (f <= signal_band[1])
+        if not np.any(band_mask):
+            continue
+
+        f_band = f[band_mask]
+        P_band = Pxx[band_mask]
+
+        peak_idx_band = np.argmax(P_band)
+        
+        # Map back to full index
+        full_indices = np.where(band_mask)[0]
+        peak_idx_full = full_indices[peak_idx_band]
+        
+
+        freqs.append(f[peak_idx_full])
+        vals.append(Pxx[peak_idx_full])
+
+    return freqs, vals
+
+
+def max_peak_periodogram(
+                    signal,
+                    fs,
+                    period,
+                    signal_band = (0.02, 0.05),
+                    noise_band = (0.1, 0.9),
+                    noise_k=10,
+                    detrend='linear',
+                    
+                ):
+    """
+    Iteratively trims the signal from the end to make the spectral peak
+    (within `signal_band`) as tall as possible Evaluates its
+    significance relative to a noise floor.
+
+    Parameters
+    ----------
+        signal : array-like
+            Input 1D signal
+        fs : float
+            Sampling frequency (Hz)
+        period : float
+            Approximate period (s) of signal oscillation
+        signal_band : tuble with two floats
+            Frequency band to search for the peak
+        noise_band : tuble with two floats
+            Frequency band used to estimate noise level by averaging
+            power within this band
+        noise_k : float, default 10.0
+            Peak is considered significant if its height exceedes `noise_k*noise`
+        detrend : str, default 'linear'
+            Passed to `scipy.signal.periodogram`. See docs for 
+            `scipy.signal.periodogram` for details
+
+    Returns
+    -------
+        best_result : dict
+            {
+                "frequencies": f,
+                "power": Pxx,
+                "trimmed_signal": best_signal,
+                "peak_index": idx,
+                "symmetry_score": How similar are the two neighbours of the peak,
+                "num_trimmed": number of samples trimmed,
+                "peak_height": peak_val,
+                "noise_level": noise_level,
+                "significant": bool
+            }
+            
+    """
+
+    signal = np.asarray(signal)
+    n = len(signal)
+
+    best_height = 0
+    best_result = None
+    
+    n_drop_max = int(fs * period)
+
+    
+    # Iterate by trimming last samples
+    for k in range(n_drop_max):
+        current_signal = signal[:n - k]
+
+        f, Pxx = periodogram(current_signal, fs=fs, detrend=detrend)
+
+        # --- Peak band ---
+        band_mask = (f >= signal_band[0]) & (f <= signal_band[1])
+        if not np.any(band_mask):
+            continue
+
+        f_band = f[band_mask]
+        P_band = Pxx[band_mask]
+
+        peak_idx_band = np.argmax(P_band)
+        
+        # Map back to full index
+        full_indices = np.where(band_mask)[0]
+        peak_idx_full = full_indices[peak_idx_band]
+        peak_height = Pxx[peak_idx_full]
+
+        if peak_height > best_height:
+            best_height = peak_height
+
+            best_result = {
+                "frequencies": f,
+                "power": Pxx,
+                "trimmed_signal": current_signal,
+                "peak_index": peak_idx_full,
+                "peak_freq": f[peak_idx_full],
+                "peak_height": peak_height,
+                "num_trimmed": k,
+            }
+            
+    # --- Noise estimation ---
+
+    noise_mask = (f >= noise_band[0]) & (f <= noise_band[1])
+
+    # Exclude peak band from noise estimate (important!)
+    noise_mask &= ~band_mask
+
+    if np.any(noise_mask):
+        noise_level = np.mean(Pxx[noise_mask])
+    else:
+        noise_level = np.nan
+        print("No values in the noise band. Cannot estimate noise level.")
+    
+    if best_result is not None:
+        best_result["noise_level"] = noise_level
+        best_result['noise_k'] = noise_k
+        best_result["significant"] = peak_height >= noise_k * noise_level
+        best_result['signal_band_f1'] = signal_band[0]
+        best_result['signal_band_f2'] = signal_band[1]
+        best_result['noise_band_f1'] = noise_band[0]
+        best_result['noise_band_f2'] = noise_band[1]
+    
+    return best_result
 
 def symmetric_peak_periodogram(
                     signal,
