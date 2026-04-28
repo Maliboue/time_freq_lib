@@ -227,7 +227,8 @@ def cwt_with_coi(data,
         return xr.Dataset(
             data_vars=dict(
                 wt_coefs=(('f', 't'), wt_coefs),
-                coi=('f', coi)
+                coi=('f', coi),
+                scales=('f', scales)
             ),
             coords=dict(
                 f=wt_freqs, 
