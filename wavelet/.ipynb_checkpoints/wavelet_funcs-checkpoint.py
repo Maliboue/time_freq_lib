@@ -129,6 +129,72 @@ def wavelet_ridge(W, freqs, times, return_xarray=True):
                 ridge_amp, 
                 ridge_phase
                )
+    
+
+def keep_ridge_inside_mask(mask, ridge_freq, freq_axis=None, outside=np.nan):
+    """
+    Keep only ridge frequency values that fall inside a 2D binary mask.
+
+    Parameters
+    ----------
+    mask : array_like, shape (n_freq, n_time)
+        Binary mask in frequency x time space. True/1 means significant island.
+
+    ridge_freq : array_like, shape (n_time,)
+        Ridge frequency as a function of time.
+
+    freq_axis : array_like, shape (n_freq,), optional
+        Frequency values corresponding to mask rows. If None, `ridge_freq`
+        is assumed to already contain frequency-row indices.
+
+    outside : float, optional
+        Value assigned when the ridge is outside the mask. Default is np.nan.
+
+    Returns
+    -------
+    ridge_inside : ndarray, shape (n_time,)
+        Ridge frequency values only where the ridge lies inside the mask.
+        Outside-mask values are replaced by `outside`.
+    """
+    mask = np.asarray(mask).astype(bool)
+    ridge_freq = np.asarray(ridge_freq)
+
+    n_freq, n_time = mask.shape
+
+    if ridge_freq.shape[0] != n_time:
+        raise ValueError("ridge_freq length must match mask.shape[1]")
+
+    if freq_axis is None:
+        # ridge_freq contains integer frequency indices
+        freq_idx = np.rint(ridge_freq).astype(int)
+        ridge_values = ridge_freq.copy()
+    else:
+        # ridge_freq contains physical frequency values
+        freq_axis = np.asarray(freq_axis)
+
+        if freq_axis.shape[0] != n_freq:
+            raise ValueError("freq_axis length must match mask.shape[0]")
+
+        # nearest frequency-bin index for each ridge frequency
+        freq_idx = np.array([
+            np.argmin(np.abs(freq_axis - f))
+            for f in ridge_freq
+        ])
+
+        ridge_values = ridge_freq.copy()
+
+    time_idx = np.arange(n_time)
+
+    valid = (
+        (freq_idx >= 0) &
+        (freq_idx < n_freq) &
+        mask[freq_idx, time_idx]
+    )
+
+    ridge_inside = np.full_like(ridge_values, outside, dtype=float)
+    ridge_inside[valid] = ridge_values[valid]
+
+    return ridge_inside
 
 def cwt_with_coi(data, 
                  time, 
