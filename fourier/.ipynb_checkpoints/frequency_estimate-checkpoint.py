@@ -192,8 +192,7 @@ def symmetric_peak_periodogram(
                     signal_band = (0.02, 0.05),
                     noise_band = (0.1, 0.9),
                     noise_k=10,
-                    detrend='linear',
-                    
+                    detrend='linear'
                 ):
     """
     Iteratively trims the signal from the end to make the spectral peak
@@ -230,7 +229,7 @@ def symmetric_peak_periodogram(
                 "symmetry_score": How similar are the two neighbours of the peak,
                 "num_trimmed": number of samples trimmed,
                 "peak_height": peak_val,
-                "noise_level": noise_level,
+                "noise_level": noise_level, computed as the mean PSD in the noise band,
                 "significant": bool
             }
             
@@ -239,7 +238,7 @@ def symmetric_peak_periodogram(
     signal = np.asarray(signal)
     n = len(signal)
 
-    best_score = np.inf
+    best_score = 0
     best_result = None
     
     n_drop_max = int(fs * period)
@@ -267,9 +266,9 @@ def symmetric_peak_periodogram(
         left = P_band[peak_idx_band - 1]
         right = P_band[peak_idx_band + 1]
 
-        score = abs(left - right)
+        score =  P_band[peak_idx_band] - np.mean([left, right])
 
-        if score < best_score:
+        if score > best_score:
             best_score = score
 
             # Map back to full index
@@ -283,9 +282,9 @@ def symmetric_peak_periodogram(
                 "trimmed_signal": current_signal,
                 "peak_index": peak_idx_full,
                 "peak_freq": f[peak_idx_full],
+                "peak_height": peak_val,
                 "symmetry_score": score,
                 "num_trimmed": k,
-                "peak_height": peak_val,
             }
             
     # --- Noise estimation ---

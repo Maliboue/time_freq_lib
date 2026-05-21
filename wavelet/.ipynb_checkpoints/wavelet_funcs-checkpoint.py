@@ -270,7 +270,7 @@ def cwt_with_coi(data,
         # Wavelet transform setup
     wavelet = f'cmor{bandwidth}-{central_freq}'
     dt = np.diff(time).mean()
-    
+        
     # Calculate the padding size
     pad_len = int(len(data) * padding_fraction)
     
@@ -280,9 +280,9 @@ def cwt_with_coi(data,
                               time[-1] + pad_len * dt,
                               len(padded_data))
 
-    scales = np.geomspace(central_freq/freq_max, central_freq/freq_min, nscales) / dt # Scales in number of samples, used by PyWavelets. Central freq is in 1/samples (???)
+    scales = np.geomspace(central_freq/freq_max, central_freq/freq_min, nscales) * (1/dt) # Central freq is in units of wavelet x-values, not time.
     
-    coi = np.sqrt(bandwidth) * scales * dt  # Where the wavelet's power drops by e^{-2}. Multiplication with dt converts scales from units of samples to units of time
+    coi = np.sqrt(bandwidth) * scales * dt 
     
     wt_coefs, wt_freqs = pywt.cwt(padded_data, scales=scales, wavelet=wavelet, sampling_period=dt, **kwargs)
     wt_coefs = wt_coefs[:, pad_len:len(padded_data)-pad_len] # remove padding
@@ -293,6 +293,7 @@ def cwt_with_coi(data,
         return xr.Dataset(
             data_vars=dict(
                 wt_coefs=(('f', 't'), wt_coefs),
+                wt_amp = (('f', 't'), abs(wt_coefs)),
                 coi=('f', coi),
                 scales=('f', scales)
             ),
@@ -308,14 +309,68 @@ def cwt_with_coi(data,
         )
     
     
-def plot_cwt(coefs, freqs, times, coi=None, ax=None, add_colorbar=False, **kwargs):
-    
-    return_fig = False
+def plot_cwt(coefs, 
+             freqs, 
+             times, 
+             coi=None, 
+             ax=None, 
+             add_colorbar=False, 
+             cbar_kwg=dict(cbar_frac=0.1, 
+                           cbar_width=0.01,
+                           cbar_pad=0.01, 
+                           label=''), 
+             **kwargs):
+    """
+    Plot a Continuous Wavelet Transform (CWT) as a time-frequency heatmap.
+
+    Parameters
+    ----------
+    coefs : 2D array-like
+        Wavelet coefficients to plot. Shape should be (len(freqs), len(times)).
+    freqs : 1D array-like
+        Frequencies corresponding to the rows of `coefs`.
+    times : 1D array-like
+        Time points corresponding to the columns of `coefs`.
+    coi : 1D array-like or None, optional
+        Cone of influence (COI) curve to overlay on the plot. If provided, a dashed
+        white line is drawn showing the COI boundaries.
+    ax : matplotlib.axes.Axes or None, optional
+        Axes object on which to draw the plot. If None, a new figure and axes
+        are created.
+    add_colorbar : bool, optional
+        If True, adds a colorbar to the right of the axes.
+    cbar_kwg : dict, optional
+        Dictionary specifying colorbar properties:
+            - 'cbar_frac' : fraction of height to offset the colorbar from bottom/top (default 0.1)
+            - 'cbar_width' : width of the colorbar in figure coordinates (default 0.01)
+            - 'cbar_pad' : horizontal padding between axes and colorbar (default 0.01)
+            - 'label' : label for the y-axis of the colorbar (default '')
+    **kwargs : additional keyword arguments
+        Passed to `Axes.pcolormesh`, e.g., `cmap`, `vmin`, `vmax`.
+
+    Returns
+    -------
+    tuple
+        Tuple containing objects depending on input arguments:
+        - If `ax` is None, the returned tuple starts with the `Figure` and `Axes` objects.
+        - The `QuadMesh` object returned by `pcolormesh`.
+        - If `add_colorbar` is True, the `Axes` of the colorbar is also included.
+
+    Notes
+    -----
+    - The function rasterizes the pcolormesh for faster rendering of large datasets.
+    - The colorbar, if added, is positioned to the right of the main axes with ticks
+      and label on the right side, without shrinking the main axes.
+    - The cone of influence (COI) can be optionally plotted as a dashed line.
+    """
+        
+    returned = []
     if not ax:
         f, ax = plt.subplots(figsize=(10, 4))
-        return_fig = True
+        returned.append(f)
+        returned.append(ax)
     
-    im = ax.pcolormesh(times, freqs, coefs, rasterized=True, **kwargs)
+    pc = ax.pcolormesh(times, freqs, coefs, rasterized=True, **kwargs)
     
     if coi is not None:
         ax.plot(coi, freqs, 
@@ -323,14 +378,29 @@ def plot_cwt(coefs, freqs, times, coi=None, ax=None, add_colorbar=False, **kwarg
                 color='w', ls='--', alpha=0.5)
 
     if add_colorbar:
-        divider = make_axes_locatable(ax)
-        cax     = divider.append_axes("right", size="3%", pad=0.07) 
-        plt.colorbar(im, cax=cax)
-
-    if return_fig:
-        return f, ax
+        # divider = make_axes_locatable(ax)
+        # cax     = divider.append_axes("right", size="3%", pad=0.07) 
+        # plt.colorbar(im, cax=cax)
+        
+        ## Add colorbars
+        bbox = ax.get_position()
+        height = bbox.y1-bbox.y0
+        cax = plt.gcf().add_axes([bbox.x1+cbar_kwg['cbar_pad'], 
+                           bbox.y0 + cbar_kwg['cbar_frac']*height,
+                           cbar_kwg['cbar_width'], 
+                           height*(1-cbar_kwg['cbar_frac']*2)])  # [left, bottom, width, height] in figure coords
+        cax.yaxis.tick_right()
+        cax.yaxis.set_label_position("right")
+        cbar = plt.colorbar(pc, cax=cax)
+        cax.set_ylabel(cbar_kwg['label'])
+        
+        returned.append(cax)
+    returned.append(pc)
     
-def plot_timeseries_and_its_cwt(x, t, f1=0.01, f2=0.035, axs=None, show_smoothed=True, sigma_gb=7, **kwgs):
+    return tuple(returned)
+    
+def plot_timeseries_and_its_cwt(x, t, f1=0.01, f2=0.035, axs=None, 
+                                show_smoothed=True, sigma_gb=7, **kwgs):
     """
     Plot time series `x` and its continuous wavelet transform (CWT).
     
