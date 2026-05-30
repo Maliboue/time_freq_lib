@@ -2,63 +2,60 @@ import numpy as np
 import xarray as xr
 from scipy.signal import periodogram
 
-# def windowed_periodogram(x, fs, window_size):
-#     """
-#     Compute windowed periodograms of a time series.
+def trim_to_windows_around_injection(x, t, t_inj, w):
+    """
+    Trim x and t so that an integer number of windows of duration w
+    fit on both sides of the injection time.
 
-#     Parameters
-#     ----------
-#     x : array-like
-#         1D time series
-#     fs : float
-#         Sampling rate (Hz)
-#     window_size : int
-#         Window size in samples
+    Parameters
+    ----------
+    x : array_like
+        Data.
 
-#     Returns
-#     -------
-#     xr.DataArray
-#         DataArray with dims ('time', 'frequency')
-#         - time: center of each window (in seconds)
-#         - frequency: frequency bins (Hz)
-#     """
-#     x = np.asarray(x)
-#     n = len(x)
+    t : array_like
+        Time stamps (uniformly sampled).
 
-#     if window_size > n:
-#         raise ValueError("window_size must be <= length of time series")
+    t_inj : float
+        Injection time.
 
-#     # Number of full windows (non-overlapping)
-#     n_windows = n // window_size
+    w : float
+        Window duration.
 
-#     spectra = []
-#     times = []
+    Returns
+    -------
+    x_trim : ndarray
+    t_trim : ndarray
+    i_inj_trim : int
+        Index of injection sample in trimmed arrays.
+    """
+    x = np.asarray(x)
+    t = np.asarray(t)
 
-#     for i in range(n_windows):
-#         start = i * window_size
-#         end = start + window_size
-#         segment = x[start:end]
+    dt = np.median(np.diff(t))
+    nwin = int(round(w / dt))
 
-#         # Compute periodogram
-#         f, pxx = periodogram(segment, fs=fs)
+    # Injection sample
+    i_inj = np.argmin(np.abs(t - t_inj))
 
-#         spectra.append(pxx)
+    # Number of complete windows before and after
+    n_before = i_inj // nwin
+    n_after = (len(x) - i_inj - 1) // nwin
 
-#         # Center time of the segment (in seconds)
-#         center_sample = start + window_size / 2
-#         times.append(center_sample / fs)
+    start = i_inj - n_before * nwin
+    stop = i_inj + n_after * nwin + 1
 
-#     return xr.DataArray(
-#             np.array(spectra).T,
-#             dims=("f", "t"),
-#             coords={
-#                 "t": np.array(times),
-#                 "f": f
-#             },
-#         )
+    x_trim = x[start:stop]
+    t_trim = t[start:stop]
 
+    i_inj_trim = i_inj - start
 
-def windowed_periodogram(x, fs, window_size, axis=-1):
+    return x_trim, t_trim, i_inj_trim
+
+def windowed_periodogram(x,
+                         fs,
+                         window_size,
+                         axis=-1,
+                         time_values=None):
     """
     Compute windowed periodograms of an nD array along a specified axis.
 
@@ -66,27 +63,27 @@ def windowed_periodogram(x, fs, window_size, axis=-1):
     ----------
     x : array-like
         Input nD array.
+
     fs : float
         Sampling rate (Hz).
+
     window_size : int
         Window size in samples.
+
     axis : int, optional
         Axis along which to compute the periodograms.
         Default is -1.
 
+    time_values : array-like, optional
+        Time values corresponding to samples along `axis`.
+        If provided, window center times are computed from these values.
+        Length must equal x.shape[axis].
+
     Returns
     -------
     xr.DataArray
-        DataArray containing the periodograms.
-
-        Output dimensions are:
-        - original dimensions except the analyzed axis
-        - "window" : window index / time segment
-        - "f" : frequency bins
-
-        Coordinates:
-        - "t" : center time of each window (seconds)
-        - "f" : frequency bins (Hz)
+        Periodograms with dimensions:
+        (..., f, t)
     """
     x = np.asarray(x)
 
@@ -95,6 +92,15 @@ def windowed_periodogram(x, fs, window_size, axis=-1):
 
     if window_size > n:
         raise ValueError("window_size must be <= length of selected axis")
+
+    if time_values is not None:
+        time_values = np.asarray(time_values)
+        if time_values.ndim != 1:
+            raise ValueError("time_values must be 1D")
+        if len(time_values) != n:
+            raise ValueError(
+                "len(time_values) must equal x.shape[axis]"
+            )
 
     # Number of full non-overlapping windows
     n_windows = n // window_size
@@ -115,25 +121,26 @@ def windowed_periodogram(x, fs, window_size, axis=-1):
     # Compute periodogram along the last axis
     f, pxx = periodogram(x_windowed, fs=fs, axis=-1)
 
-    # pxx shape:
-    # (..., n_windows, n_freq)
-
-    # Move frequency axis before window axis
+    # (..., n_windows, n_freq) -> (..., n_freq, n_windows)
     pxx = np.moveaxis(pxx, -1, -2)
 
-    # Time coordinates (center of windows)
-    times = (
-        (np.arange(n_windows) * window_size + window_size / 2) / fs
-    )
+    # Window center times
+    if time_values is None:
+        times = (
+            np.arange(n_windows) * window_size
+            + window_size / 2
+        ) / fs
+    else:
+        time_values = time_values[:trimmed_length]
+        t_windowed = time_values.reshape(n_windows, window_size)
+        times = t_windowed.mean(axis=1)
 
     # Build dimension names
     dims = [f"dim_{i}" for i in range(x.ndim)]
     original_dim = dims[axis]
 
-    # Remove analyzed axis and append window/frequency dims
     out_dims = dims[:axis] + dims[axis + 1:] + ["f", "t"]
 
-    # Build coordinates
     coords = {
         "f": f,
         "t": times,
