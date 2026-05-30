@@ -198,7 +198,8 @@ def cwt_with_coi(data,
         bandwidth, which is the variance of the modulating Gaussian, and the central 
         frequency, which is the frequency (Hz) of the modulated compex exponent.
         
-        - Scales are computed from freq_min and freq_max using numpy.geomspace.
+        - Scales are computed from central_freq/freq_max to
+        central_freq/freq_min using numpy.geomspace and divided by dt.
     """
     
         # Wavelet transform setup
@@ -307,8 +308,12 @@ def plot_cwt(coefs,
     pc = ax.pcolormesh(times, freqs, coefs, rasterized=True, **kwargs)
     
     if coi is not None:
-        ax.plot(coi, freqs, 
-                times.max()-coi, freqs, 
+        
+        coi_left = coi if times.min()>0 else coi + times.min() # tiem.min()<0 e.g. in cases where an injection time is set to zero
+        coi_right = times.max() - coi # Assumes time.max() is always > 0
+        
+        ax.plot(coi_left, freqs, 
+                coi_right, freqs,
                 color='w', ls='--', alpha=0.5)
 
     if add_colorbar:
