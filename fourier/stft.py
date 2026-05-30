@@ -55,7 +55,9 @@ def windowed_periodogram(x,
                          fs,
                          window_size,
                          axis=-1,
-                         time_values=None):
+                         time_values=None,
+                         **kwgs
+                        ):
     """
     Compute windowed periodograms of an nD array along a specified axis.
 
@@ -78,6 +80,8 @@ def windowed_periodogram(x,
         Time values corresponding to samples along `axis`.
         If provided, window center times are computed from these values.
         Length must equal x.shape[axis].
+        
+    kwgs : keyword arguments passed to scipy.signal.periodogram
 
     Returns
     -------
@@ -119,7 +123,7 @@ def windowed_periodogram(x,
     x_windowed = x_moved.reshape(new_shape)
 
     # Compute periodogram along the last axis
-    f, pxx = periodogram(x_windowed, fs=fs, axis=-1)
+    f, pxx = periodogram(x_windowed, fs=fs, axis=-1, **kwgs)
 
     # (..., n_windows, n_freq) -> (..., n_freq, n_windows)
     pxx = np.moveaxis(pxx, -1, -2)
