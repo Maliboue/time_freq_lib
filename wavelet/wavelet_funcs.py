@@ -396,3 +396,50 @@ def plot_timeseries_and_its_cwt(x, t, f1=0.01, f2=0.035, axs=None,
     
     if return_fig:
         return f, (ax, ax1)
+    
+    
+
+def scaled_wavelets_pywt(wavelet_name, scales, dt=1.0, length=4096):
+    """
+    Generate scaled wavelets from a PyWavelets continuous mother wavelet.
+
+    Returns
+    -------
+    t : ndarray
+        Common time grid.
+
+    wavelets : ndarray
+        Complex array, shape (n_scales, n_time).
+
+    freqs : ndarray
+        PyWavelets scale-to-frequency mapping.
+    """
+    wavelet = pywt.ContinuousWavelet(wavelet_name)
+
+    # mother wavelet samples
+    psi, x = wavelet.wavefun(length=length)
+
+    scales = np.asarray(scales)
+
+    # common time support large enough for largest scale
+    t_min = x.min() * scales.max()
+    t_max = x.max() * scales.max()
+    t = np.arange(t_min, t_max, dt)
+
+    wavelets = []
+
+    for s in scales:
+        # scaled wavelet: psi_s(t) = 1/sqrt(s) psi(t/s)
+        x_query = t / s
+
+        real = np.interp(x_query, x, np.real(psi), left=0, right=0)
+        imag = np.interp(x_query, x, np.imag(psi), left=0, right=0)
+
+        psi_s = (real + 1j * imag) / np.sqrt(s)
+        wavelets.append(psi_s)
+
+    wavelets = np.asarray(wavelets)
+
+    freqs = pywt.scale2frequency(wavelet, scales) / dt
+
+    return t, wavelets, freqs
