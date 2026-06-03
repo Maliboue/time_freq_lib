@@ -4,8 +4,8 @@ import pywt
 import xarray as xr
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.ndimage import gaussian_filter
-
 import numpy as np
+import matlab
 
 def morlet_coi_ssq(scales, dt=1.0):
     """
@@ -468,3 +468,172 @@ def scaled_wavelets_pywt(wavelet_name, scales, dt=1.0, length=4096):
     freqs = pywt.scale2frequency(wavelet, scales) / dt
 
     return t, wavelets, freqs
+
+def matlab_cwt(
+    eng,
+    x,
+    Fs,
+    time_bandwidth=30,
+    frequency_limits=None,
+    voices_per_octave=16,
+    boundary="periodic",
+    return_xarray=True,
+):
+    """
+    Compute MATLAB CWT using the Morse wavelet from Python.
+
+    Parameters
+    ----------
+    eng : matlab.engine.MatlabEngine
+        Active MATLAB engine.
+
+    x : array_like
+        1D signal.
+
+    Fs : float
+        Sampling frequency.
+
+    time_bandwidth : float, optional
+        Morse TimeBandwidth parameter.
+
+    frequency_limits : tuple or None, optional
+        (fmin, fmax). If None, computed with MATLAB cwtfreqbounds().
+
+    voices_per_octave : int, optional
+        Voices per octave.
+
+    boundary : str, optional
+        Boundary handling.
+
+    return_xarray : bool, optional
+        If True (default), return an xarray.Dataset.
+        Otherwise return raw arrays.
+
+    Returns
+    -------
+    xr.Dataset or tuple
+    """
+    x = np.asarray(x, dtype=float).ravel()
+
+    eng.workspace["x"] = matlab.double(x.reshape(-1, 1).tolist())
+    eng.workspace["Fs"] = float(Fs)
+    eng.workspace["time_bandwidth"] = float(time_bandwidth)
+    eng.workspace["voices_per_octave"] = float(voices_per_octave)
+    eng.workspace["boundary"] = boundary
+    eng.workspace["use_auto_freq_limits"] = frequency_limits is None
+
+    if frequency_limits is not None:
+        eng.workspace["fmin"] = float(frequency_limits[0])
+        eng.workspace["fmax"] = float(frequency_limits[1])
+
+    eng.eval(
+        """
+        if use_auto_freq_limits
+            [fmin, fmax] = cwtfreqbounds( ...
+                numel(x), Fs, ...
+                Wavelet="Morse", ...
+                TimeBandwidth=time_bandwidth, ...
+                VoicesPerOctave=voices_per_octave);
+        end
+
+        fb = cwtfilterbank( ...
+            SignalLength=numel(x), ...
+            SamplingFrequency=Fs, ...
+            Wavelet="Morse", ...
+            TimeBandwidth=time_bandwidth, ...
+            FrequencyLimits=[fmin, fmax], ...
+            VoicesPerOctave=voices_per_octave, ...
+            Boundary=boundary);
+
+        [cfs, f, coi] = cwt(x, FilterBank=fb);
+
+        amp = abs(cfs);
+        scales = fb.Scales;
+        """,
+        nargout=0,
+    )
+
+    wt_amp = np.asarray(eng.workspace["amp"])
+    wt_coefs = np.asarray(eng.workspace["cfs"])
+    freq = np.asarray(eng.workspace["f"]).squeeze()
+    coi = np.asarray(eng.workspace["coi"]).squeeze()
+    scales = np.asarray(eng.workspace["scales"]).squeeze()
+    fmin = float(eng.workspace["fmin"])
+    fmax = float(eng.workspace["fmax"])
+
+    if not return_xarray:
+        return wt_amp, freq, coi, scales, fmin, fmax
+
+    t = np.arange(len(x)) / Fs
+
+    ds = xr.Dataset(
+        data_vars=dict(
+            wt_coefs=(("f", "t"), wt_coefs),
+            wt_amp=(("f", "t"), wt_amp),
+            coi=("t", coi),
+            signal=("t", x),
+        ),
+        coords=dict(
+            f=freq,
+            t=t,
+            scale=("f", scales),
+        ),
+        attrs=dict(
+            Fs=Fs,
+            wavelet="Morse",
+            time_bandwidth=time_bandwidth,
+            voices_per_octave=voices_per_octave,
+            boundary=boundary,
+            frequency_min=fmin,
+            frequency_max=fmax,
+            matlab_engine_version=eng.version()
+        ),
+    )
+
+    return ds
+
+import numpy as np
+
+def coi_around_injection(t, coi, t_inject):
+    """
+    Construct COI around an injection time by mirroring the pre-injection COI
+    and appending the post-injection COI.
+
+    Parameters
+    ----------
+    t : array_like
+        Time array.
+
+    coi : array_like
+        COI values corresponding to `t`.
+
+    t_inject : float
+        Injection time.
+
+    Returns
+    -------
+    t_coi_injection : ndarray
+        Time values corresponding to `coi_injection`.
+
+    coi_injection : ndarray
+        COI values arranged around injection.
+    """
+    t = np.asarray(t)
+    coi = np.asarray(coi)
+
+    if t.shape != coi.shape:
+        raise ValueError("t and coi must have the same shape")
+
+    # Left side: all samples before injection
+    mask_left = t < t_inject
+    coi_left = coi[mask_left][::-1]
+
+    # Right side: from beginning up to the middle of t
+    coi_right = coi[t < np.mean(t)]
+    
+    coi_injection = np.concatenate([coi_left, coi_right])
+
+    # Time axis starting from original beginning, same length as constructed COI
+    t_coi_injection = t[:len(coi_injection)]
+
+    return t_coi_injection, coi_injection
