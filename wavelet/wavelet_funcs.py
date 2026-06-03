@@ -7,6 +7,31 @@ from scipy.ndimage import gaussian_filter
 
 import numpy as np
 
+def morlet_coi_ssq(scales, dt=1.0):
+    """
+    Cone-of-influence half-width for ssqueezepy Morlet wavelet.
+
+    Parameters
+    ----------
+    scales : array_like
+        CWT scales.
+
+    dt : float
+        Sampling interval.
+
+    Returns
+    -------
+    coi_half_width : ndarray
+        COI half-width in time units.
+
+    Note
+    ----
+    This assumes that the wavelet's envelope is exp(-t^2/2) (ssqueezepy, Torrece & Compo 1998).
+    
+    """
+    scales = np.asarray(scales)
+    return np.sqrt(2) * scales * dt
+
 def intersection_between_coi_and_if_cmor(coi, ifreq, t, bw, cf, at_the_end=False):
     
     """Find intersection between cone of influence and instantaneous
