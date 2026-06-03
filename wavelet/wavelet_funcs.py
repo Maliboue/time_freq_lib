@@ -6,6 +6,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.ndimage import gaussian_filter
 import numpy as np
 import matlab
+from scipy.special import gamma
 
 def morlet_coi_ssq(scales, dt=1.0):
     """
@@ -473,7 +474,7 @@ def matlab_cwt(
     eng,
     x,
     Fs,
-    time_bandwidth=30,
+    time_bandwidth=60,
     frequency_limits=None,
     voices_per_octave=16,
     boundary="periodic",
@@ -592,7 +593,19 @@ def matlab_cwt(
 
     return ds
 
-import numpy as np
+def admissibility_constant_gmw_matlab(gam=3, timebandwidth=60):
+
+    """
+    Source:
+    https://se.mathworks.com/help/wavelet/ref/cwtfilterbank.scalespectrum.html#:~:text=cPsi%20%3D%20anorm%5E2/(2*ga).*(1/2)%5E(2*(be/ga)%2D1)*gamma(2*be/ga)%3B
+
+    """
+    beta = timebandwidth / gam
+
+    anorm = 2*np.exp(beta/gam*(1+(np.log(gam)-np.log(beta))));
+    cPsi = anorm**2 / (2*gam)*(1/2)**(2*(beta/gam)-1)*gamma(2*beta/gam);
+    
+    return float(cPsi)        
 
 def coi_around_injection(t, coi, t_inject):
     """
