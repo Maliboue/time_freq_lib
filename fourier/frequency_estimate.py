@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.signal import periodogram
+from scipy.signal import periodogram, find_peaks
+import xarray as xr
 
 def scan_periodogram(
                     signal,
@@ -350,106 +351,145 @@ def plot_results(res, ax=None, label=None, stepplot=False):
     ax.set(xlabel="Frequency (Hz)", ylabel="Spectral power")
     return ax
 
-# def symmetric_peak_periodogram(
-#                     signal,
-#                     fs,
-#                     period,
-#                     fmin=0.02,
-#                     fmax=0.04
-#                 ):
-#     """
-#     Iteratively trims the signal from the end to make the spectral peak
-#     (within [fmin, fmax]) as symmetric as possible.
+def detect_periodogram_peaks(
+    freq,
+    power,
+    noise_band,
+    signal_band,
+    p_global_max=None,
+    prominence=None,
+    distance=None,
+    return_xarray=True,
+):
+    """
+    Detect significant peaks in a periodogram.
 
-#     Parameters
-#     ----------
-#         signal : array-like
-#             Input 1D signal
-#         fs : float
-#             Sampling frequency (Hz)
-#         period : float
-#             Approximate period (s) of sigmal oscillation.
-#         fmin, fmax : float
-#             Frequency band to search for the peak
+    Parameters
+    ----------
+    freq : array-like
+        Frequency array.
+    power : array-like
+        Periodogram values.
+    noise_band : tuple(float, float)
+        Frequency interval used to estimate background noise.
+        Example: (0.30, 0.45)
+    signal_band : tuple(float, float)
+        Frequency interval in which peaks are searched.
+        Example: (0.01, 0.20)
+    p_global_max : float or None
+        If given, only peaks with p_global <= p_global_max
+        are retained.
+    prominence : float or None
+        Passed to scipy.signal.find_peaks.
+    distance : int or None
+        Passed to scipy.signal.find_peaks.
+    return_xarray : bool
+        If True return xarray.Dataset,
+        otherwise return dict.
 
+    Returns
+    -------
+    xarray.Dataset or dict
+    """
 
-#     Returns
-#     -------
-#         best_result : dict
-#             {
-#                 "frequencies": f,
-#                 "power": Pxx,
-#                 "trimmed_signal": best_signal,
-#                 "peak_index": idx,
-#                 "symmetry_score": score,
-#                 "num_trimmed": number of samples trimmed
-#             }
+    freq = np.asarray(freq)
+    power = np.asarray(power)
 
-#     Note
-#     ----
-#         - The maximum number of samples to be dropped from 
-#         the end of the signal is estimated as int(period * fs).
-        
-#         - See an explanation in section B in 
-#         Kutuzov et al. 2025 (DOI: 10.1063/5.0225333).
-#     """
+    # ----------------------------
+    # Estimate background level
+    # ----------------------------
+    noise_mask = (
+        (freq >= noise_band[0]) &
+        (freq <= noise_band[1])
+    )
 
-#     signal = np.asarray(signal)
-#     n = len(signal)
+    if noise_mask.sum() == 0:
+        raise ValueError("noise_band contains no frequencies")
 
-#     best_score = np.inf
-#     best_result = None
-    
-#     n_drop_max = int(fs * period)
+    P0 = power[noise_mask].mean()
 
-#     # Iterate by trimming last samples
-#     for k in range(n_drop_max):
-#         current_signal = signal[:n - k]
+    # ----------------------------
+    # Search region
+    # ----------------------------
+    signal_mask = (
+        (freq >= signal_band[0]) &
+        (freq <= signal_band[1])
+    )
 
-#         f, Pxx = periodogram(current_signal, fs=fs)
+    signal_indices = np.where(signal_mask)[0]
 
-#         # Restrict to frequency band
-#         band_mask = (f >= fmin) & (f <= fmax)
-#         if not np.any(band_mask):
-#             continue
+    if len(signal_indices) == 0:
+        raise ValueError("signal_band contains no frequencies")
 
-#         f_band = f[band_mask]
-#         P_band = Pxx[band_mask]
+    local_power = power[signal_mask]
 
-#         # Find peak in band
-#         peak_idx_band = np.argmax(P_band)
+    peaks_local, props = find_peaks(
+        local_power,
+        prominence=prominence,
+        distance=distance,
+    )
 
-#         # Need neighbors on both sides
-#         if peak_idx_band == 0 or peak_idx_band == len(P_band) - 1:
-#             continue
+    peak_idx = signal_indices[peaks_local]
 
-#         # Neighbor values
-#         left = P_band[peak_idx_band - 1]
-#         right = P_band[peak_idx_band + 1]
+    # Number of tested frequencies
+    N = signal_mask.sum()
 
-#         # Symmetry criterion: absolute difference
-#         score = abs(left - right)
+    peak_freq = freq[peak_idx]
+    peak_power = power[peak_idx]
 
-#         # Optional normalization (uncomment if desired)
-#         # peak_val = P_band[peak_idx_band]
-#         # score = abs(left - right) / peak_val
+    # ----------------------------
+    # Statistics - compute false alarm probability
+    # ----------------------------
+    z = peak_power / P0
 
-#         if score < best_score:
-#             best_score = score
+    p_single = np.exp(-z) # for single bin
 
-#             # Map back to full index
-#             full_indices = np.where(band_mask)[0]
-#             peak_idx_full = full_indices[peak_idx_band]
+    p_global = 1.0 - (1.0 - p_single) ** N # correction for multiple bins
 
-#             best_result = {
-#                 "frequencies": f,
-#                 "power": Pxx,
-#                 "trimmed_signal": current_signal,
-#                 "peak_index": peak_idx_full,
-#                 "symmetry_score": score,
-#                 "num_trimmed": k
-#             }
-    
-    
+    # ----------------------------
+    # Optional significance filter
+    # ----------------------------
+    if p_global_max is not None:
+        keep = p_global <= p_global_max
 
-#     return best_result
+        peak_idx = peak_idx[keep]
+        peak_freq = peak_freq[keep]
+        peak_power = peak_power[keep]
+        z = z[keep]
+        p_single = p_single[keep]
+        p_global = p_global[keep]
+
+    # ----------------------------
+    # Output
+    # ----------------------------
+    if return_xarray:
+
+        ds = xr.Dataset(
+            data_vars=dict(
+                frequency=("peak", peak_freq),
+                power=("peak", peak_power),
+                Z=("peak", z),
+                p_single=("peak", p_single),
+                p_global=("peak", p_global),
+                index=("peak", peak_idx),
+            ),
+            attrs=dict(
+                P0=float(P0),
+                noise_band=noise_band,
+                signal_band=signal_band,
+                N_tested=int(N),
+            ),
+        )
+
+        return ds
+
+    return {
+        "indices": peak_idx,
+        "frequencies": peak_freq,
+        "power": peak_power,
+        "P0": P0,
+        "Z": z,
+        "p_single": p_single,
+        "p_global": p_global,
+        "N_tested": N,
+    }
