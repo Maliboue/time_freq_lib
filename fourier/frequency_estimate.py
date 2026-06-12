@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.signal import periodogram, find_peaks
 import xarray as xr
+from scipy.stats import chi2
 
 def scan_periodogram(
                     signal,
@@ -356,6 +357,7 @@ def detect_periodogram_peaks(
     power,
     noise_band,
     signal_band,
+    n_averages=1,
     p_global_max=None,
     prominence=None,
     distance=None,
@@ -370,6 +372,9 @@ def detect_periodogram_peaks(
         Frequency array.
     power : array-like
         Periodogram values.
+    n_averages : float
+        Effective number of spectrograms averaged to get
+        `power`.
     noise_band : tuple(float, float)
         Frequency interval used to estimate background noise.
         Example: (0.30, 0.45)
@@ -442,9 +447,22 @@ def detect_periodogram_peaks(
     # ----------------------------
     z = peak_power / P0
 
-    p_single = np.exp(-z) # for single bin
+    M = int(n_averages)
 
-    p_global = 1.0 - (1.0 - p_single) ** N # correction for multiple bins
+    if M < 1:
+        raise ValueError("n_averages must be >= 1")
+
+    if M == 1:
+        # raw periodogram
+        p_single = np.exp(-z)
+    else:
+        # Welch / averaged periodogram
+        p_single = chi2.sf(
+            2 * M * z,
+            df=2 * M,
+        )
+
+    p_global = 1.0 - (1.0 - p_single) ** N
 
     # ----------------------------
     # Optional significance filter
@@ -478,6 +496,7 @@ def detect_periodogram_peaks(
                 noise_band=noise_band,
                 signal_band=signal_band,
                 N_tested=int(N),
+                N_averaged_spectra= int(M),
             ),
         )
 
@@ -492,4 +511,95 @@ def detect_periodogram_peaks(
         "p_single": p_single,
         "p_global": p_global,
         "N_tested": N,
+        "num_averaged_spectra": M,
+    }
+
+
+def detect_significant_bins(
+    freq,
+    power,
+    noise_band,
+    signal_band,
+    n_averages=1,
+    p_single_max=0.01,
+    return_xarray=True,
+):
+    """
+    Detect all frequency bins significantly above background.
+
+    Parameters
+    ----------
+    p_single_max : float
+        Maximum single-bin false alarm probability.
+
+    Returns
+    -------
+    xarray.Dataset or dict
+    """
+
+    freq = np.asarray(freq)
+    power = np.asarray(power)
+
+    M = int(n_averages)
+
+    if M < 1:
+        raise ValueError("n_averages must be >= 1")
+
+    noise_mask = (
+        (freq >= noise_band[0]) &
+        (freq <= noise_band[1])
+    )
+
+    signal_mask = (
+        (freq >= signal_band[0]) &
+        (freq <= signal_band[1])
+    )
+
+    P0 = power[noise_mask].mean()
+
+    idx = np.where(signal_mask)[0]
+
+    z = power[idx] / P0
+
+    if M == 1:
+        p_single = np.exp(-z)
+    else:
+        p_single = chi2.sf(
+            2 * M * z,
+            df=2 * M,
+        )
+
+    keep = p_single <= p_single_max
+
+    bin_idx = idx[keep]
+
+    if return_xarray:
+
+        return xr.Dataset(
+            data_vars=dict(
+                frequency=("bin", freq[bin_idx]),
+                power=("bin", power[bin_idx]),
+                Z=("bin", power[bin_idx] / P0),
+                p_single=("bin", p_single[keep]),
+                index=("bin", bin_idx),
+            ),
+            attrs=dict(
+                P0=float(P0),
+                noise_band=noise_band,
+                signal_band=signal_band,
+                p_single_max=float(p_single_max),
+                N_averaged_spectra=M,
+                freq_step = np.diff(freq)[0]
+            ),
+        )
+
+    return {
+        "indices": bin_idx,
+        "frequencies": freq[bin_idx],
+        "power": power[bin_idx],
+        "Z": power[bin_idx] / P0,
+        "p_single": p_single[keep],
+        "P0": P0,
+        "N_averaged_spectra":M,
+        "freq_step": np.diff(freq)[0]
     }
