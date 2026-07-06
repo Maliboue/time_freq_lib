@@ -364,8 +364,7 @@ def plot_cwt(coefs,
     
     return tuple(returned)
     
-def plot_timeseries_and_its_cwt(x, t, f1=0.01, f2=0.035, axs=None, 
-                                show_smoothed=True, sigma_gb=7, **kwgs):
+def plot_timeseries_and_its_cwt(x, t, f1=0.01, f2=0.035, axs=None, show_smoothed=True, sigma_gb=7, **kwgs):
     """
     Plot time series `x` and its continuous wavelet transform (CWT).
     
