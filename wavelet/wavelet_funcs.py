@@ -649,3 +649,73 @@ def coi_around_injection(t, coi, t_inject):
     t_coi_injection = t[:len(coi_injection)]
 
     return t_coi_injection, coi_injection
+
+
+def band_significance(wt_powL2, noise_band, signal_band, threshold_k=3, ignorena=True):
+    """
+    Estimate whether wavelet power integrated over a frequency band exceeds
+    the expected noise level.
+
+    Parameters
+    ----------
+    wt_powL2 : xarray.DataArray
+        Wavelet power spectrum with dimensions ``('f', 't')``, where ``f`` is
+        frequency and ``t`` is time. Should be (proportional to) L2-normalized
+        CWT power because thresholding assumes flat noise floor.
+        
+    noise_band : tuple of float
+        Lower and upper frequency bounds ``(f_min, f_max)`` defining the
+        frequency band used to estimate the mean background noise power.
+    
+    signal_band : tuple of float
+        Lower and upper frequency bounds ``(f_min, f_max)`` over which the
+        wavelet power is integrated.
+    
+    threshold_k : float, default=3
+        Scaling factor applied to the estimated mean noise power when computing
+        the expected noise power. (Currently not used in the implementation.)
+    
+    ignorena : bool, default True
+        Whether or not to ignore NaNs. If True, a time point is excluded if any
+        of ``wt_powL2`` at this time is NaN (e.g. if cone of influence is masked out).
+
+    Returns
+    -------
+    signif : xarray.DataArray
+        Boolean array indexed by time indicating whether the integrated signal
+        band power exceeds the estimated noise power. Time points with NaN band
+        power are excluded.
+    band_power_rel : xarray.DataArray
+        Integrated signal-band power normalized by the expected noise power.
+    noise_power : float
+        Estimated integrated noise power over the signal bandwidth.
+    noise_mean : float
+        Mean wavelet power within the noise band.
+        
+    Notes
+    -----
+    
+        - The mean wavelet power within a noise band is used to estimate
+    the background noise power. The noise power integral is calculated
+    as the mean wavelet noise power multiplied by `threshold_k` and
+    the `signal_band` width. The wavelet power is then integrated over the
+    signal band and normalized by the expected noise power integral. Time 
+    points are classified as significant when the normalized band power exceeds 1.
+    
+        - Assumes that wavelet power `wt_powL2` is sorted along decreasing 
+        frequency values.
+        
+    """
+    noise_mean = wt_powL2[::-1].sel(f=slice(*noise_band)).mean(('f', 't')).item()
+    noise_power = noise_mean * (signal_band[1] - signal_band[0])
+
+    if ignorena:
+        band_power = wt_powL2[::-1].sel(f=slice(*signal_band)).integrate('f')
+    else:
+        band_power = wt_powL2[::-1].sel(f=slice(*signal_band)).fillna(0).integrate('f') # Replace Nan to 0 and summ them up during integration
+        
+    band_power_rel = band_power / noise_power
+    signif = band_power_rel > threshold_k
+    signif = signif[~band_power_rel.isnull()]
+    
+    return signif, band_power_rel, noise_power, noise_mean 
