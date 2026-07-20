@@ -257,14 +257,9 @@ def track_band2(
         fp = interpolate_peak(profile.values, profile.f.values, fp)
 
         if np.isfinite(fp):
-            candidate_band = (
-                fp * (1 - frac),
-                fp * (1 + frac),
-            )
+            candidate_band = (fp * (1 - frac), fp * (1 + frac))
 
-            pwr, noise_power, pwr_norm = _process_profile(
-                profile, candidate_band
-            )
+            pwr, noise_power, pwr_norm = _process_profile(profile, candidate_band)
 
             # Accept new peak only if sufficiently significant
             if pwr_norm > threshold_k:
@@ -272,23 +267,13 @@ def track_band2(
                 band = candidate_band
             else:
                 # Keep previous tracked frequency
-                band = (
-                    fc * (1 - frac),
-                    fc * (1 + frac),
-                )
-                pwr, noise_power, pwr_norm = _process_profile(
-                    profile, band
-                )
+                band = (fc * (1 - frac), fc * (1 + frac))
+                pwr, noise_power, pwr_norm = _process_profile(profile, band)
 
         else:
             # No detected peak: keep previous tracked frequency
-            band = (
-                fc * (1 - frac),
-                fc * (1 + frac),
-            )
-            pwr, noise_power, pwr_norm = _process_profile(
-                profile, band
-            )
+            band = (fc * (1 - frac), fc * (1 + frac))
+            pwr, noise_power, pwr_norm = _process_profile(profile, band)
 
         freq.append(fc)
         fmin.append(band[0])
@@ -328,7 +313,7 @@ def analyze_scalogram(scalogram, freq_band_coarse, noise, threshold_k=3, upsampl
         Dataset describing the oscillation frequency band on a (possibly
         coarser) time grid. It must contain the variables:
 
-        - ``fc`` : center frequency,
+        - ``frequency`` : center frequency,
         - ``fmin`` : lower band limit,
         - ``fmax`` : upper band limit.
 
