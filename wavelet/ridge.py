@@ -140,11 +140,11 @@ def coi_intersections(t, freq, coi):
         # Fraction between t[i] and t[i+1]
         alpha = -d[i] / (d[i + 1] - d[i])
 
-        if np.issubdtype(t.dtype, np.datetime64):
-            dt = t[i + 1] - t[i]
-            tcross = t[i] + alpha * dt
-        else:
-            tcross = t[i] + alpha * (t[i + 1] - t[i])
+        # if np.issubdtype(t.dtype, np.datetime64):
+        #     dt = t[i + 1] - t[i]
+        #     tcross = t[i] + alpha * dt
+        # else:
+        tcross = t[i] + alpha * (t[i + 1] - t[i])
 
         crossings.append(tcross)
 
