@@ -699,6 +699,7 @@ def plot_band_tracking(
     labels=None,
     ylim=(None, 0.06),
     figsize=(8, 8),
+    track_init=None,
 ):
     """
     Plot wavelet spectrum with tracked bands and normalized power.
@@ -723,6 +724,8 @@ def plot_band_tracking(
     ylim : tuple, default=(None, 0.06)
         Frequency limits.
     figsize : tuple, default=(8, 6)
+    track_init : xr.DataArray
+        Initial guess used for tracking.
 
     Returns
     -------
@@ -750,6 +753,9 @@ def plot_band_tracking(
     if coi is not None:
         coi.plot(ax=ax, ls='--', color='w', alpha=0.5)
 
+    if track_init is not None:
+        track_init.plot(ax=ax, color='r', ls='--', alpha=0.7)
+        
     for i, (track, color) in enumerate(zip(tracks, colors)):
         label = None if labels is None else labels[i]
 
@@ -759,6 +765,8 @@ def plot_band_tracking(
 
         track.power_norm.plot( ax=ax1, label=label)
 
+    
+    
     if ylim[0] is None:
         ylim = (pv.f.min().item(), ylim[1])
     ax.set_ylim(*ylim)
