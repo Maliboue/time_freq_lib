@@ -395,7 +395,6 @@ def track_band2(
     -------
     xr.Dataset
     """
-
     t = profiles.t.values
     
     if np.ndim(f0) == 0:
@@ -754,7 +753,10 @@ def plot_band_tracking(
         coi.plot(ax=ax, ls='--', color='w', alpha=0.5)
 
     if track_init is not None:
-        track_init.plot(ax=ax, color='r', ls='--', alpha=0.7)
+        if np.issubdtype(type(track_init), np.number): # Scalar and not string
+            ax.axhline(track_init, color='r', ls='--', alpha=0.7)
+        elif isinstance(x, np.ndarray) and x.ndim == 1:
+            track_init.plot(ax=ax, color='r', ls='--', alpha=0.7)
         
     for i, (track, color) in enumerate(zip(tracks, colors)):
         label = None if labels is None else labels[i]
