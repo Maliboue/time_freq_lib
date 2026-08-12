@@ -633,7 +633,7 @@ def analyze_scalogram(scalogram, freq_band_coarse, noise, threshold_k=3, upsampl
         Mean noise floor of the scalogram. Used to compute time-varying
         noise power (because the relative bandwidth is preserved, and
         fc varies in time).
-    threshold_k : float, default 4
+    threshold_k : float, default 3
         Threshold applied to the normalized band power. Time points with
         ``power_norm > threshold_k`` are marked as significant.
         
@@ -755,7 +755,7 @@ def plot_band_tracking(
     if track_init is not None:
         if np.issubdtype(type(track_init), np.number): # Scalar and not string
             ax.axhline(track_init, color='r', ls='--', alpha=0.7)
-        elif isinstance(x, np.ndarray) and x.ndim == 1:
+        elif isinstance(track_init, np.ndarray) and x.ndim == 1:
             track_init.plot(ax=ax, color='r', ls='--', alpha=0.7)
         
     for i, (track, color) in enumerate(zip(tracks, colors)):
