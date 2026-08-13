@@ -477,6 +477,455 @@ def track_band2(
         coords=dict(t=t),
     )
 
+import numpy as np
+import xarray as xr
+
+
+def track_band_seed_bidirectional(
+    profiles,
+    f0,
+    integrate_func,
+    noise_floor,
+    frac_search=0.5,
+    frac=0.3,
+    threshold_k=3,
+    track_threshold_k=None,
+):
+    """
+    Track an oscillation band using an initial ridge to find seeds, then
+    replace the initial ridge with ridges propagated bidirectionally
+    from each seed.
+
+    Parameters
+    ----------
+    profiles : xr.DataArray
+        Dimensions (t, f).
+
+    f0 : array-like or float
+        Reference frequency at each time step. Used only to construct the
+        initial ridge from which seeds are obtained.
+
+    integrate_func : callable
+        integrate_func(profile, band) -> power
+
+    noise_floor : float
+        Noise power density.
+
+    frac_search : float, default 0.5
+        Relative half-bandwidth used when searching for a peak.
+
+    frac : float, default 0.3
+        Relative half-bandwidth used for power integration.
+
+    threshold_k : float, default 3
+        Threshold for identifying seeds.
+
+    track_threshold_k : float, optional
+        Threshold used when propagating from seeds. If None, uses
+        threshold_k / 2.
+
+    Returns
+    -------
+    xr.Dataset
+        Final merged ridge.
+
+    Notes
+    -----
+    The algorithm has three stages:
+
+    1. Construct an initial ridge using the original f0-based method.
+    2. Find all seed points where normalized power exceeds threshold_k.
+    3. Starting from every seed, propagate forward and backward using
+       track_threshold_k.
+
+    The propagated ridges replace the initial ridge wherever they
+    produce a valid track. Where propagation temporarily fails, the
+    initial ridge is used as a fallback and propagation continues from
+    that frequency.
+    """
+
+    t = profiles.t.values
+    n = len(profiles)
+
+    if track_threshold_k is None:
+        track_threshold_k = threshold_k / 2
+
+    # ------------------------------------------------------------------
+    # Prepare f0
+    # ------------------------------------------------------------------
+    if np.ndim(f0) == 0:
+        f0 = np.full(n, float(f0))
+    elif isinstance(f0, xr.DataArray):
+        f0 = f0.values
+    else:
+        f0 = np.asarray(f0)
+
+    if len(f0) != n:
+        raise ValueError("f0 must have one value per time step.")
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    def _band(center, fraction):
+        return (
+            center * (1 - fraction),
+            center * (1 + fraction),
+        )
+
+    def _evaluate(profile, center):
+        """
+        Find the strongest peak near center and calculate its
+        normalized integrated power.
+        """
+        if not np.isfinite(center) or center <= 0:
+            return np.nan, None, np.nan, np.nan, np.nan
+
+        search_band = _band(center, frac_search)
+
+        x = profile.sel(f=slice(*search_band))
+
+        if x.size == 0:
+            return np.nan, None, np.nan, np.nan, np.nan
+
+        fp = peak_freq(x.values, x.f.values)
+
+        if not np.isfinite(fp):
+            return np.nan, None, np.nan, np.nan, np.nan
+
+        # Refine peak frequency using the full spectrum
+        fp = interpolate_peak(
+            profile.values,
+            profile.f.values,
+            fp,
+        )
+
+        if not np.isfinite(fp):
+            return np.nan, None, np.nan, np.nan, np.nan
+
+        candidate_band = _band(fp, frac)
+
+        pwr = integrate_func(profile, candidate_band)
+
+        bandwidth = candidate_band[1] - candidate_band[0]
+        noise_power = noise_floor * bandwidth
+
+        if noise_power > 0:
+            pwr_norm = pwr / noise_power
+        else:
+            pwr_norm = np.nan
+
+        return (
+            fp,
+            candidate_band,
+            pwr,
+            noise_power,
+            pwr_norm,
+        )
+
+    # ==================================================================
+    # 1. CONSTRUCT INITIAL RIDGE
+    # ==================================================================
+    #
+    # This is essentially the old algorithm. It is NOT the final ridge.
+    # It is only used to find candidate seed points and as a fallback
+    # during propagation.
+    #
+    initial_freq = np.full(n, np.nan)
+    initial_fmin = np.full(n, np.nan)
+    initial_fmax = np.full(n, np.nan)
+    initial_power = np.full(n, np.nan)
+    initial_noise = np.full(n, np.nan)
+    initial_power_norm = np.full(n, np.nan)
+
+    fc = f0[0]
+
+    for i, (profile, fref) in enumerate(zip(profiles, f0)):
+
+        fp, band, pwr, noise_power, pwr_norm = _evaluate(
+            profile,
+            fref,
+        )
+
+        if np.isfinite(fp) and pwr_norm >= threshold_k:
+            # Strong enough to update initial ridge
+            fc = fp
+
+            initial_freq[i] = fp
+            initial_fmin[i] = band[0]
+            initial_fmax[i] = band[1]
+            initial_power[i] = pwr
+            initial_noise[i] = noise_power
+            initial_power_norm[i] = pwr_norm
+
+        elif np.isfinite(fc):
+            # Keep previous accepted frequency
+            band = _band(fc, frac)
+
+            pwr = integrate_func(profile, band)
+            bandwidth = band[1] - band[0]
+            noise_power = noise_floor * bandwidth
+
+            if noise_power > 0:
+                pwr_norm = pwr / noise_power
+            else:
+                pwr_norm = np.nan
+
+            initial_freq[i] = fc
+            initial_fmin[i] = band[0]
+            initial_fmax[i] = band[1]
+            initial_power[i] = pwr
+            initial_noise[i] = noise_power
+            initial_power_norm[i] = pwr_norm
+
+    # ==================================================================
+    # 2. FIND SEEDS
+    # ==================================================================
+    #
+    # Seeds are obtained from the initial ridge. We use the conservative
+    # threshold here.
+    #
+    seed_indices = np.where(
+        initial_power_norm >= threshold_k
+    )[0]
+
+    if len(seed_indices) == 0:
+        return xr.Dataset(
+            data_vars=dict(
+                frequency=("t", initial_freq),
+                fmin=("t", initial_fmin),
+                fmax=("t", initial_fmax),
+                power=("t", initial_power),
+                noise=("t", initial_noise),
+                power_norm=("t", initial_power_norm),
+                source=("t", np.zeros(n, dtype=int)),
+            ),
+            coords=dict(t=t),
+        )
+
+    # ==================================================================
+    # 3. STORAGE FOR FINAL MERGED RIDGE
+    # ==================================================================
+    #
+    # Start with the initial ridge. Propagated tracks will replace it.
+    #
+    final_freq = initial_freq.copy()
+    final_fmin = initial_fmin.copy()
+    final_fmax = initial_fmax.copy()
+    final_power = initial_power.copy()
+    final_noise = initial_noise.copy()
+    final_power_norm = initial_power_norm.copy()
+
+    # 0 = initial ridge
+    # 1 = propagated ridge
+    final_source = np.zeros(n, dtype=int)
+
+    # Keep track of the confidence of propagated assignments.
+    propagated_score = np.full(n, -np.inf)
+
+    # ==================================================================
+    # 4. PROPAGATE EACH SEED
+    # ==================================================================
+    def _propagate_from_seed(seed_i, direction):
+        """
+        Propagate one seed in one direction.
+
+        direction = +1 -> forward
+        direction = -1 -> backward
+
+        When the propagated candidate falls below track_threshold_k,
+        the initial ridge is used as a fallback. Propagation then
+        continues from that fallback frequency.
+
+        Returns
+        -------
+        list of dict
+            Accepted points along this propagation.
+        """
+
+        results = []
+
+        # Start from the seed itself
+        fc = initial_freq[seed_i]
+
+        if not np.isfinite(fc):
+            return results
+
+        i = seed_i
+
+        while True:
+
+            i += direction
+
+            if i < 0 or i >= n:
+                break
+
+            profile = profiles.isel(t=i)
+
+            # ----------------------------------------------------------
+            # Try to continue the propagated ridge
+            # ----------------------------------------------------------
+            fp, band, pwr, noise_power, pwr_norm = _evaluate(
+                profile,
+                fc,
+            )
+
+            if (
+                np.isfinite(fp)
+                and np.isfinite(pwr_norm)
+                and pwr_norm >= track_threshold_k
+            ):
+                # Strong enough: use newly detected peak
+                accepted_freq = fp
+                accepted_band = band
+                accepted_power = pwr
+                accepted_noise = noise_power
+                accepted_norm = pwr_norm
+                source = 1
+
+            else:
+                # ------------------------------------------------------
+                # Weak propagation:
+                # fall back to the original ridge at this time.
+                # ------------------------------------------------------
+                fallback_freq = initial_freq[i]
+
+                if not np.isfinite(fallback_freq):
+                    # No fallback available.
+                    #
+                    # We could terminate here, but instead simply skip
+                    # this point and keep searching from the old fc.
+                    continue
+
+                accepted_freq = fallback_freq
+                accepted_band = _band(
+                    accepted_freq,
+                    frac,
+                )
+
+                accepted_power = integrate_func(
+                    profile,
+                    accepted_band,
+                )
+
+                bandwidth = (
+                    accepted_band[1] -
+                    accepted_band[0]
+                )
+
+                accepted_noise = noise_floor * bandwidth
+
+                if accepted_noise > 0:
+                    accepted_norm = (
+                        accepted_power /
+                        accepted_noise
+                    )
+                else:
+                    accepted_norm = np.nan
+
+                source = 0
+
+            # ----------------------------------------------------------
+            # Store result
+            # ----------------------------------------------------------
+            results.append(
+                {
+                    "i": i,
+                    "frequency": accepted_freq,
+                    "band": accepted_band,
+                    "power": accepted_power,
+                    "noise": accepted_noise,
+                    "power_norm": accepted_norm,
+                    "source": source,
+                }
+            )
+
+            # IMPORTANT:
+            # Continue propagation from the frequency that was actually
+            # accepted. Thus after a weak region, tracking can reconnect
+            # to a strong peak later.
+            fc = accepted_freq
+
+        return results
+
+    # ==================================================================
+    # 5. RUN PROPAGATION FROM EVERY SEED
+    # ==================================================================
+    for seed_i in seed_indices:
+
+        # --------------------------------------------------------------
+        # The seed itself is always a propagated point.
+        # --------------------------------------------------------------
+        seed_result = {
+            "i": seed_i,
+            "frequency": initial_freq[seed_i],
+            "band": (
+                initial_fmin[seed_i],
+                initial_fmax[seed_i],
+            ),
+            "power": initial_power[seed_i],
+            "noise": initial_noise[seed_i],
+            "power_norm": initial_power_norm[seed_i],
+            "source": 1,
+        }
+
+        # --------------------------------------------------------------
+        # Propagate both directions
+        # --------------------------------------------------------------
+        backward = _propagate_from_seed(
+            seed_i,
+            direction=-1,
+        )
+
+        forward = _propagate_from_seed(
+            seed_i,
+            direction=+1,
+        )
+
+        track = [seed_result] + backward + forward
+
+        # --------------------------------------------------------------
+        # Merge this propagated ridge into the final ridge.
+        #
+        # If multiple seeds generate overlapping ridges, keep the
+        # propagated result with the highest normalized power.
+        # --------------------------------------------------------------
+        for result in track:
+
+            i = result["i"]
+            score = result["power_norm"]
+
+            if not np.isfinite(score):
+                continue
+
+            if score > propagated_score[i]:
+
+                propagated_score[i] = score
+
+                final_freq[i] = result["frequency"]
+                final_fmin[i] = result["band"][0]
+                final_fmax[i] = result["band"][1]
+                final_power[i] = result["power"]
+                final_noise[i] = result["noise"]
+                final_power_norm[i] = result["power_norm"]
+
+                final_source[i] = 1
+
+    # ==================================================================
+    # 6. RETURN FINAL RIDGE
+    # ==================================================================
+    return xr.Dataset(
+        data_vars=dict(
+            frequency=("t", final_freq),
+            fmin=("t", final_fmin),
+            fmax=("t", final_fmax),
+            power=("t", final_power),
+            noise=("t", final_noise),
+            power_norm=("t", final_power_norm),
+            source=("t", final_source),
+        ),
+        coords=dict(t=t),
+    )
+
 def track_band_scored(
     profiles,
     f0,
