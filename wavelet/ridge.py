@@ -54,6 +54,10 @@ def interpolate(y, x, x_new):
     return f(x_new)
 
 def split_scalogram(p, num_segments):
+    """Block-averages an xarray along ``t`` dimension
+    into ``num_segments`` blocks. Computes the block size
+    as ``p.t.size//num_segments``. Trims the end.
+    """
     window_size = p.t.size//num_segments
     return p.coarsen(t=window_size, boundary='trim').mean('t')
 
@@ -1204,7 +1208,7 @@ def plot_band_tracking(
     if track_init is not None:
         if np.issubdtype(type(track_init), np.number): # Scalar and not string
             ax.axhline(track_init, color='r', ls='--', alpha=0.7)
-        elif isinstance(track_init, np.ndarray) and x.ndim == 1:
+        else:
             track_init.plot(ax=ax, color='r', ls='--', alpha=0.7)
         
     for i, (track, color) in enumerate(zip(tracks, colors)):
